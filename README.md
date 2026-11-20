@@ -55,7 +55,8 @@ The manager's messages are untrusted input. Defences are in code, not only in th
   run commands or read files). Codex still exposes sub-agents and a JS sandbox without file or
   network access; a watchdog kills the call on the first sign of any tool use. It reacts to an
   observed event, so it limits the damage rather than proving nothing started. For strict
-  isolation use `LLM_BACKEND=openai` (a plain API call with no tools at all);
+  isolation use `LLM_BACKEND=openai` (a plain API call with no tools at all; checked with a
+  local model behind LM Studio's OpenAI-compatible server);
 - one LLM call per burst of messages, max `MAX_LLM_CALLS` per conversation (counted per
   process run: a `--resume` starts the count again), incoming text cut
   to `MAX_INCOMING_CHARS`, voice notes longer than `MAX_VOICE_SECONDS` are not transcribed,
