@@ -105,3 +105,14 @@ stays readable and the confirmation is always visible as text.
 | `booking_agent/core.py` | turn loop shared by Telegram and the simulator |
 | `booking_agent/telegram_runner.py` | Telethon client and handlers |
 | `scenarios/` | scripted manager behaviours for offline tests |
+
+## Tests and decisions
+
+- `python tests/test_live_races.py`: no-network checks with a fake model for two live-chat
+  races (the manager corrects themselves while the model is thinking; the manager withdraws
+  the agreement in the same message that names the restaurant).
+- `python run.py simulate --script scenarios/<file>.txt`: scripted manager behaviours
+  (alternative time, deposit, name, phone, voice notes, prompt injection, offers outside the
+  owner's limits, silence, language switch, cancellation).
+- [DECISIONS.md](DECISIONS.md) (Ukrainian): every open question in the brief, the decision
+  taken and why.

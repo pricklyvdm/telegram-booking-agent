@@ -62,7 +62,7 @@ async def synthesize(text: str, out_dir: Path, voice: str = "en-GB-RyanNeural") 
     mp3, ogg = stem.with_suffix(".mp3"), stem.with_suffix(".ogg")
     for attempt in range(5):  # the TTS service fails now and then ("No audio was received")
         try:
-            await edge_tts.Communicate(text, voice, rate=os.getenv("TTS_RATE", "-5%")).save(str(mp3))
+            await edge_tts.Communicate(text, voice, rate=os.getenv("TTS_RATE", "+0%")).save(str(mp3))
             break
         except Exception:
             if attempt == 4:
