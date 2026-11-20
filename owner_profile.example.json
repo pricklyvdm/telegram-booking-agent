@@ -4,6 +4,8 @@
   "party_size": 2,
   "time": "17:00",
   "time_flex_minutes": 30,
+  "time_soft_minutes": 15,
+  "_time_rule": "Within 30 min of 17:00 the agent decides alone. 30-45 min off: it asks the manager to hold the slot and asks the owner. Further off: polite refusal.",
   "phone": "",
   "share_phone": false,
   "deposit_policy": "May agree to a deposit of up to £20 per person if it is paid on arrival or through the restaurant's own payment link. Never send card details in the chat.",

@@ -29,6 +29,9 @@ class Settings:
     owner_channel: str = _env("OWNER_CHANNEL", "me")
     owner_timeout: int = int(_env("OWNER_TIMEOUT_SECONDS", "180"))
     debounce: float = float(_env("DEBOUNCE_SECONDS", "4"))
+    # Manager went quiet: one polite follow-up, later a report to the owner.
+    silence_followup_min: int = int(_env("SILENCE_FOLLOWUP_MINUTES", "5"))
+    silence_giveup_min: int = int(_env("SILENCE_GIVEUP_MINUTES", "20"))
 
     llm_backend: str = _env("LLM_BACKEND", "codex")  # codex | openai
     codex_bin: str = _env("CODEX_BIN", "codex")

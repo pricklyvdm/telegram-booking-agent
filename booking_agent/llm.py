@@ -19,8 +19,8 @@ _NULLABLE_STR = {"type": ["string", "null"]}
 DECISION_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["understood", "decision", "reply", "ask_owner", "updates",
-                 "manager_agreed", "conversation_over"],
+    "required": ["understood", "decision", "reply", "ask_owner", "updates", "offered_time",
+                 "manager_agreed", "manager_cancelled", "conversation_over"],
     "properties": {
         "understood": {"type": "string", "description": "What the manager said/means, one short line."},
         "decision": {"type": "string", "description": "What you decided to do and why, one short line."},
@@ -38,7 +38,11 @@ DECISION_SCHEMA = {
                 "note": _NULLABLE_STR,
             },
         },
+        "offered_time": {**_NULLABLE_STR,
+                         "description": "A different time the manager offered in the NEW message(s), HH:MM, else null."},
         "manager_agreed": {"type": "boolean"},
+        "manager_cancelled": {"type": "boolean",
+                              "description": "The manager cancelled or withdrew an already confirmed booking."},
         "conversation_over": {"type": "boolean"},
     },
 }

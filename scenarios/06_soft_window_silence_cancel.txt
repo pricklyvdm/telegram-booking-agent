@@ -1,0 +1,8 @@
+# 17:40 is just outside the window: hold it and ask the owner. Then silence, language switch, cancellation.
+M: Sorry, 17:00 is gone. The earliest I have is 17:40, would that do?
+O: yes 17:40 is ok
+M: Great, 17:40 for two is booked at The Copper Kettle.
+M: Oh no, sorry, I've just seen the 17:40 table was double-booked. I have to cancel it.
+S:
+M: Вибачте за затримку. Є столик на 17:15 на двох, підійде?
+M: Готово, 17:15 на двох у The Copper Kettle.

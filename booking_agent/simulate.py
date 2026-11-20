@@ -6,6 +6,7 @@ Scripted:     python run.py simulate --script scenarios/deposit.txt
 Script lines:  M: text   manager text message
                V: text   manager voice message (text -> edge-tts -> ogg -> Whisper -> agent)
                O: text   owner's answer to the agent's next question
+               S:        the manager goes quiet (triggers the follow-up)
                # comment
 """
 from __future__ import annotations
@@ -63,6 +64,8 @@ async def simulate(s: Settings, script: Path | None) -> None:
         for l in lines:
             if l[:2] in ("M:", "V:"):
                 await feed(l[0], l[2:].strip())
+            elif l.startswith("S:"):  # pretend the manager went quiet
+                await agent.process("silence", received="(manager silent, simulated)")
     else:
         print("Type the manager's messages. Prefix 'v ' to send it as a voice note. Empty line = quit.")
         while True:

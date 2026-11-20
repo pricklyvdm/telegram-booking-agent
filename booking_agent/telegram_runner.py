@@ -110,4 +110,4 @@ async def run(s: Settings, target: str, live: bool, resume: bool) -> None:
         asyncio.get_running_loop().run_in_executor(None, voice._load_model, s.whisper_model)
     if not resume:
         await agent.start()
-    await asyncio.gather(agent.run_forever(), client.run_until_disconnected())
+    await asyncio.gather(agent.run_forever(), agent.watch_silence(), client.run_until_disconnected())

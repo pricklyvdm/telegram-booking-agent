@@ -38,6 +38,10 @@ class BookingAgent:
         self.last_msg_at = 0.0
         self.manager_used_voice = False
         self.stopped = False  # LLM call limit reached
+        self.lock = asyncio.Lock()  # one turn at a time (messages, silence follow-ups)
+        self.last_sent_at = 0.0
+        self.followed_up = False
+        self.gave_up = False
 
     # ---- input ----
     def on_manager_message(self, text: str, is_voice: bool = False) -> None:
@@ -46,13 +50,15 @@ class BookingAgent:
         self.conv.add("manager", text, is_voice)
         self.manager_used_voice = is_voice
         self.last_msg_at = asyncio.get_running_loop().time()
+        self.followed_up = self.gave_up = False
         self.echo(f"MANAGER{' (voice)' if is_voice else ''}: {text}")
         self.save()
         self.dirty.set()
 
     # ---- loop ----
     async def start(self) -> None:
-        await self.process("start", received="(agent starts the conversation)")
+        async with self.lock:
+            await self.process("start", received="(agent starts the conversation)")
 
     async def run_forever(self) -> None:
         loop = asyncio.get_running_loop()
@@ -62,7 +68,30 @@ class BookingAgent:
                 await asyncio.sleep(0.3)
             self.dirty.clear()
             if self.conv.new_manager_turns() and not self.stopped:
-                await self.process("manager")
+                async with self.lock:
+                    await self.process("manager")
+
+    async def watch_silence(self) -> None:
+        """Manager stopped answering before the booking is confirmed: one polite follow-up,
+        then, if still nothing, tell the owner. The agent keeps listening either way."""
+        loop = asyncio.get_running_loop()
+        while True:
+            await asyncio.sleep(15)
+            b = self.conv.booking
+            if (self.stopped or self.lock.locked() or b.status in ("confirmed", "finished")
+                    or not self.conv.turns or self.conv.turns[-1].role != "agent"):
+                continue
+            quiet = (loop.time() - self.last_sent_at) / 60
+            if not self.followed_up and quiet >= self.s.silence_followup_min:
+                self.followed_up = True
+                async with self.lock:
+                    await self.process("silence", received=f"(manager silent for {int(quiet)} min)")
+            elif self.followed_up and not self.gave_up and quiet >= self.s.silence_giveup_min:
+                self.gave_up = True
+                self.log.write(f"(manager silent for {int(quiet)} min after a follow-up)", "no reply",
+                               "report to the owner, keep listening", "(nothing sent)", event="give_up")
+                await self.owner.notify(f"{self.conv.peer} has not replied for {int(quiet)} minutes "
+                                        "after a follow-up. Booking not confirmed; I keep listening.")
 
     async def process(self, event: str, received: str | None = None, depth: int = 0) -> None:
         if received is None:
@@ -90,6 +119,9 @@ class BookingAgent:
                 f"booked a table for {b.party_size} at {b.time} today, {b.date_long}, at "
                 f"{b.restaurant_name}" + (f", under {b.guest_name}" if b.guest_name else "")
                 + (". Notes: " + "; ".join(n.rstrip(". ") for n in b.notes) if b.notes else "") + ".")
+        if d.cancelled:
+            await self.owner.notify(f"{self.conv.peer} cancelled the confirmed booking. "
+                                    "Looking for the nearest alternative within your limits.")
         if d.limit_reached and not self.stopped:
             self.stopped = True
             await self.owner.notify(f"stopped replying to {self.conv.peer}: LLM call limit reached.")
@@ -113,12 +145,14 @@ class BookingAgent:
                     ogg, dur = await voice.synthesize(text, self.s.logs_dir / "voice", self.s.tts_voice)
                 await self.t.send_voice(ogg, dur, caption=text)
                 self.conv.add("agent", text, True)
+                self.last_sent_at = asyncio.get_running_loop().time()
                 self.echo(f"AGENT (voice + caption): {text}")
                 return
             except Exception as e:  # never lose a reply because of TTS
                 self.echo(f"   TTS failed ({e}), sending text")
         await self.t.send_text(text)
         self.conv.add("agent", text)
+        self.last_sent_at = asyncio.get_running_loop().time()
         self.echo(f"AGENT: {text}")
 
     def save(self) -> None:

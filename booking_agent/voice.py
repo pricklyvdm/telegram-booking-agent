@@ -25,11 +25,11 @@ def _load_model(name: str, device: str = os.getenv("WHISPER_DEVICE", "cpu")):
 def _transcribe_sync(path: Path, model_name: str) -> str:
     global _model
     try:
-        segments, _ = _load_model(model_name).transcribe(str(path), language="en", vad_filter=True)
+        segments, _ = _load_model(model_name).transcribe(str(path), vad_filter=True)
         return " ".join(s.text.strip() for s in segments).strip()
     except RuntimeError:  # CUDA libs missing at inference time -> fall back to CPU
         _model = None
-        segments, _ = _load_model(model_name, "cpu").transcribe(str(path), language="en", vad_filter=True)
+        segments, _ = _load_model(model_name, "cpu").transcribe(str(path), vad_filter=True)
         return " ".join(s.text.strip() for s in segments).strip()
 
 
@@ -46,9 +46,17 @@ def _duration(path: Path) -> int:
         return 1
 
 
+def pick_voice(text: str, default: str) -> str:
+    """British voice for English; if the manager switched language, a matching voice."""
+    if any("\u0400" <= ch <= "\u04ff" for ch in text):
+        return "uk-UA-OstapNeural" if any(ch in "іїєґІЇЄҐ" for ch in text) else "ru-RU-DmitryNeural"
+    return default
+
+
 async def synthesize(text: str, out_dir: Path, voice: str = "en-GB-RyanNeural") -> tuple[Path, int]:
     """Returns (path to .ogg opus voice note, duration in seconds)."""
     import edge_tts
+    voice = pick_voice(text, voice)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = out_dir / f"tts_{abs(hash(text)) % 10**8}"
     mp3, ogg = stem.with_suffix(".mp3"), stem.with_suffix(".ogg")
