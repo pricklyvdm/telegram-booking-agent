@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
+import re
 from pathlib import Path
 from typing import Protocol
 
@@ -43,6 +44,8 @@ class BookingAgent:
         self.last_sent_at = 0.0
         self.followed_up = False
         self.gave_up = False
+        self.waiting_since: float | None = None  # first unanswered agent message
+        self.payment_reported = False
 
     # ---- input ----
     def on_manager_message(self, text: str, is_voice: bool = False) -> None:
@@ -52,6 +55,7 @@ class BookingAgent:
         self.manager_used_voice = is_voice
         self.last_msg_at = asyncio.get_running_loop().time()
         self.followed_up = self.gave_up = False
+        self.waiting_since = None
         self.echo(f"MANAGER{' (voice)' if is_voice else ''}: {text}")
         self.save()
         self.dirty.set()
@@ -83,11 +87,13 @@ class BookingAgent:
                     or not self.conv.turns or self.conv.turns[-1].role != "agent"):
                 continue
             quiet = (loop.time() - self.last_sent_at) / 60
+            waited = (loop.time() - (self.waiting_since or self.last_sent_at)) / 60
             if not self.followed_up and quiet >= self.s.silence_followup_min:
                 self.followed_up = True
                 async with self.lock:
                     await self.process("silence", received=f"(manager silent for {int(quiet)} min)")
-            elif self.followed_up and not self.gave_up and quiet >= self.s.silence_giveup_min:
+            elif self.followed_up and not self.gave_up and waited >= self.s.silence_giveup_min:
+                quiet = waited
                 self.gave_up = True
                 self.log.write(f"(manager silent for {int(quiet)} min after a follow-up)", "no reply",
                                "report to the owner, keep listening", "(nothing sent)", event="give_up")
@@ -148,6 +154,14 @@ class BookingAgent:
         if b.status == "closed" and d.conversation_over and not d.limit_reached:
             await self.owner.notify(f"no table at {self.conv.peer} within your limits today; I closed politely. "
                                     "If they come back with an offer, I'll handle it.")
+        if d.rolled:
+            await self.owner.notify(f"17:00 today has passed in London, so I am asking {self.conv.peer} "
+                                    f"for 17:00 tomorrow, {b.date_long}.")
+        if not self.payment_reported and given is None and any(
+                re.search(r"£|deposit|pre-?pay|card|payment|transfer", t.text, re.I) for t in news):
+            self.payment_reported = True
+            await self.owner.notify(f"{self.conv.peer} raised payment: \"{news[-1].text[:200]}\". I said you "
+                                    "will settle it directly with the restaurant; nothing was paid or agreed.")
         if d.cancelled:
             await self.owner.notify(f"{self.conv.peer} cancelled the confirmed booking. "
                                     "Looking for the nearest alternative within your limits.")
@@ -176,6 +190,7 @@ class BookingAgent:
                 await self.t.send_voice(ogg, dur, caption=text)
                 self.conv.add("agent", text, True)
                 self.last_sent_at = asyncio.get_running_loop().time()
+                self.waiting_since = self.waiting_since or self.last_sent_at
                 self.echo(f"AGENT (voice + caption): {text}")
                 return
             except Exception as e:  # never lose a reply because of TTS
@@ -183,6 +198,7 @@ class BookingAgent:
         await self.t.send_text(text)
         self.conv.add("agent", text)
         self.last_sent_at = asyncio.get_running_loop().time()
+        self.waiting_since = self.waiting_since or self.last_sent_at
         self.echo(f"AGENT: {text}")
 
     def save(self) -> None:

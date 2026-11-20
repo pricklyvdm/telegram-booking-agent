@@ -62,7 +62,7 @@ async def run(s: Settings, target: str, live: bool, resume: bool) -> None:
 
     now = london_now()
     if now.strftime("%H:%M") >= s.owner_facts.get("time", "17:00"):
-        print(f"Note: it is already {now:%H:%M} in London, so 17:00 today has passed. Running anyway (test).")
+        print(f"Note: it is already {now:%H:%M} in London: the agent will ask for 17:00 tomorrow and say why.")
 
     # One log per attempt (the brief evaluates the last full conversation); --resume continues the latest.
     previous = sorted(s.logs_dir.glob(f"{now:%Y-%m-%d}_{uname}_*.conversation.json"))

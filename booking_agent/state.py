@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -34,6 +34,25 @@ class Booking:
     status: str = "not_started"  # not_started | requested | waiting_owner | confirmed | finished
     approved_times: list[str] = field(default_factory=lambda: ["17:00"])
     notes: list[str] = field(default_factory=list)  # facts stated by the manager (deposit, hold time...)
+    day_note: str = ""  # set when 17:00 today had passed and the booking moved to tomorrow
+
+    def day_word(self) -> str:
+        return "today" if self.date_iso == london_now().date().isoformat() else "tomorrow"
+
+    def roll_if_passed(self) -> bool:
+        """'Today' means the London date at the moment of the conversation. A time that has
+        already passed cannot be booked: move to the same time tomorrow and say so honestly."""
+        now = london_now()
+        if self.status in ("confirmed", "finished") or self.date_iso != now.date().isoformat():
+            return False
+        if now.strftime("%H:%M") < self.approved_times[0]:
+            return False
+        nxt = now + timedelta(days=1)
+        self.date_iso, self.date_long = nxt.date().isoformat(), long_date(nxt)
+        self.day_note = (f"It is already {now:%H:%M} in London, so {self.approved_times[0]} today has passed. "
+                         f"The booking is now for {self.approved_times[0]} tomorrow, {self.date_long}. "
+                         "Tell the manager this honestly and briefly.")
+        return True
 
     @classmethod
     def for_today(cls, facts: dict) -> "Booking":
@@ -44,6 +63,7 @@ class Booking:
         b.approved_times = [b.time]
         b.guest_name = facts.get("guest_name") or None
         b.restaurant_name = facts.get("restaurant_name") or None
+        b.roll_if_passed()
         return b
 
 

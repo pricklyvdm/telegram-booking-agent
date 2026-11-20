@@ -8,7 +8,7 @@
   "_time_rule": "Within 30 min of 17:00 the agent decides alone. 30-45 min off: it asks the manager to hold the slot and asks the owner. Further off: polite refusal.",
   "phone": "",
   "share_phone": false,
-  "deposit_policy": "May agree to a deposit of up to £20 per person if it is paid on arrival or through the restaurant's own payment link. Never send card details in the chat.",
+  "deposit_policy": "The agent never pays or agrees to a deposit or prepayment itself and never sends payment details. Any payment request goes to the owner; the guest settles it directly with the restaurant (on arrival or via a link sent to the guest).",
   "if_unavailable": "If nothing within the time window is free today, thank the manager politely and close the conversation.",
   "special_requests": "none",
   "notes": ""
