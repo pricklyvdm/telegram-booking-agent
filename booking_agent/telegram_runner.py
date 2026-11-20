@@ -20,7 +20,9 @@ from .state import Booking, Conversation, london_now
 def make_client(s: Settings) -> TelegramClient:
     if not s.api_id or not s.api_hash:
         raise SystemExit("TG_API_ID / TG_API_HASH are missing in .env")
-    return TelegramClient(s.session, s.api_id, s.api_hash)
+    # Never give up on a dropped network: reconnect forever (the default 5 tries crashed a live test).
+    return TelegramClient(s.session, s.api_id, s.api_hash, connection_retries=-1, retry_delay=5,
+                          auto_reconnect=True, request_retries=10)
 
 
 async def login(s: Settings) -> None:
