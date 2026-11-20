@@ -157,6 +157,11 @@ class BookingAgent:
         if d.rolled:
             await self.owner.notify(f"17:00 today has passed in London, so I am asking {self.conv.peer} "
                                     f"for 17:00 tomorrow, {b.date_long}.")
+        claim = next((t for t in (news if given is None else []) if re.search(
+            r"(client|guest|customer|owner).{0,60}(rang|called|phoned|rung|contacted|messaged)", t.text, re.I)), None)
+        if claim:
+            await self.owner.notify(f"{self.conv.peer} says you contacted them directly: \"{claim.text[:200]}\". "
+                                    "I did not accept it and kept the booking as agreed. Did you?")
         if not self.payment_reported and given is None and any(
                 re.search(r"£|deposit|pre-?pay|card|payment|transfer", t.text, re.I) for t in news):
             self.payment_reported = True

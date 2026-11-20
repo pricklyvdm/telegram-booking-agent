@@ -195,7 +195,7 @@ class Brain:
         b = self.conv.booking
         return SYSTEM.format(
             party=NUM_WORDS.get(b.party_size, b.party_size), time=b.time, date_long=b.date_long,
-            day_word=b.day_word(),
+            day_word=b.day_word(), first_time=b.approved_times[0],
             guest_ref=b.guest_name or "a guest",
             owner_answers="" if self.autonomous else " and the owner's answers in the transcript",
             authority=AUTHORITY["autonomous" if self.autonomous else "ask"])
@@ -359,6 +359,9 @@ class Brain:
                 if new_time not in b.approved_times:
                     b.approved_times.append(new_time)
                 b.time = new_time
+                if b.status in ("confirmed", "finished"):  # a new time needs a new confirmation
+                    b.status = "requested"
+                    d.guards.append(f"time changed to {new_time}: waiting for a new confirmation")
             else:
                 self._limit(d, f"{new_time} is outside the owner's time window",
                             f"The manager suggests {new_time} instead of {b.time}. Is that OK?")
