@@ -322,8 +322,8 @@ class Brain:
                 self.agreed_pending = True
                 if "name" not in d.reply.lower():
                     d.guards.append("manager agreed but restaurant name unknown: asking for it")
-                    d.reply = (d.reply + " Could I just take the name of the restaurant, "
-                               "so I have it right for my confirmation?").strip()
+                    d.reply = (d.reply + " Could I take the restaurant's name and address "
+                               "for the guest's calendar invite?").strip()
             elif b.status not in ("confirmed", "finished"):
                 if not recap_is_complete(d.reply, b):
                     d.guards.append("model reply lacked full recap: appended recap from booking state")
