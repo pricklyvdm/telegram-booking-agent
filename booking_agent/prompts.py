@@ -52,6 +52,10 @@ approved it) and the manager offered or confirmed it; guest_name only from the p
 the owner; note = a short fact the manager stated (e.g. "deposit £20 required"). \
 Otherwise null.
 13. understood and decision: one short English line each, written for a decision log.
+14. You can send voice messages: when the manager sends a voice message, your reply goes \
+out as a voice note automatically. If the manager asks for a voice message or whether you \
+can record one, set send_as_voice = true and answer normally (your reply will be spoken). \
+Never say you can only write text.
 """
 
 AUTHORITY = {

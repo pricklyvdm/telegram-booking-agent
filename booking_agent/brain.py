@@ -82,6 +82,7 @@ class Decision:
     violations: list[str] = field(default_factory=list)  # broke the owner's limits -> rewrite
     limit_reached: bool = False
     error: bool = False  # model failed twice; the turn should be retried later
+    voice: bool = False  # the manager asked for a voice reply
     cancelled: bool = False  # manager withdrew an already confirmed booking
 
 
@@ -291,6 +292,7 @@ class Brain:
                      conversation_over=bool(raw.get("conversation_over")))
         up = raw.get("updates") or {}
         from_owner = event == "owner"
+        d.voice = bool(raw.get("send_as_voice"))
 
         if from_owner:  # times the owner named, or agreed to with "yes", become approved
             answer = next((t.text for t in reversed(self.conv.turns) if t.role == "owner"), "")

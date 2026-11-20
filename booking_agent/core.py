@@ -129,7 +129,7 @@ class BookingAgent:
             received = ("[voice] " if news[-1].voice else "") + news[-1].text
 
         if d.reply:
-            await self.send(d.reply)
+            await self.send(d.reply, voice_requested=d.voice)
         decided = d.decision + (f" [code guard: {'; '.join(d.guards)}]" if d.guards else "")
         if just_confirmed:
             decided += " [booking confirmed]"
@@ -166,8 +166,9 @@ class BookingAgent:
             else:
                 await self.process("owner_timeout", received="(owner did not answer)", depth=depth + 1)
 
-    async def send(self, text: str) -> None:
-        use_voice = self.s.voice_mode == "always" or (self.s.voice_mode == "mirror" and self.manager_used_voice)
+    async def send(self, text: str, voice_requested: bool = False) -> None:
+        use_voice = self.s.voice_mode == "always" or (
+            self.s.voice_mode == "mirror" and (self.manager_used_voice or voice_requested))
         if use_voice:
             try:
                 async with self.t.typing("record-audio"):

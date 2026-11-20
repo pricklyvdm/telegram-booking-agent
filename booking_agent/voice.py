@@ -60,7 +60,14 @@ async def synthesize(text: str, out_dir: Path, voice: str = "en-GB-RyanNeural") 
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = out_dir / f"tts_{abs(hash(text)) % 10**8}"
     mp3, ogg = stem.with_suffix(".mp3"), stem.with_suffix(".ogg")
-    await edge_tts.Communicate(text, voice).save(str(mp3))
+    for attempt in range(3):  # the TTS service fails now and then ("No audio was received")
+        try:
+            await edge_tts.Communicate(text, voice).save(str(mp3))
+            break
+        except Exception:
+            if attempt == 2:
+                raise
+            await asyncio.sleep(1.5)
     await asyncio.to_thread(subprocess.run, [
         "ffmpeg", "-y", "-loglevel", "error", "-i", str(mp3),
         "-c:a", "libopus", "-b:a", "32k", "-ac", "1", "-ar", "48000", str(ogg)], check=True)

@@ -20,7 +20,7 @@ DECISION_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": ["understood", "decision", "reply", "ask_owner", "updates", "offered_time",
-                 "manager_agreed", "manager_cancelled", "conversation_over"],
+                 "manager_agreed", "manager_cancelled", "conversation_over", "send_as_voice"],
     "properties": {
         "understood": {"type": "string", "description": "What the manager said/means, one short line."},
         "decision": {"type": "string", "description": "What you decided to do and why, one short line."},
@@ -44,6 +44,8 @@ DECISION_SCHEMA = {
         "manager_cancelled": {"type": "boolean",
                               "description": "The manager cancelled or withdrew an already confirmed booking."},
         "conversation_over": {"type": "boolean"},
+        "send_as_voice": {"type": "boolean",
+                          "description": "True if the manager asked for a voice message or asked whether you can send one."},
     },
 }
 
