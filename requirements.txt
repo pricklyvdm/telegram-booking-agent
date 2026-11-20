@@ -1,0 +1,8 @@
+telethon>=1.45,<2
+cryptg            # faster Telethon crypto
+python-dotenv>=1.0
+tzdata            # Europe/London on Windows
+edge-tts>=7.0     # outgoing voice (en-GB neural voices)
+faster-whisper>=1.1  # incoming voice, local speech-to-text
+# also needs ffmpeg/ffprobe in PATH, and either the Codex CLI (ChatGPT subscription)
+# or an OpenAI-compatible API key

@@ -1,0 +1,5 @@
+# Plain path: manager agrees, agent must ask the restaurant name and repeat the booking.
+M: Hello! Yes of course, a table for two at 5pm is booked for you.
+M: It's The Copper Kettle, Shoreditch.
+M: Lovely, see you later!
+M: Bye

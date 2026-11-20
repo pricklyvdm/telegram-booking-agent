@@ -1,0 +1,111 @@
+"""LLM backends returning one JSON object that matches DECISION_SCHEMA.
+
+codex  - `codex exec` CLI on a ChatGPT subscription (no API key needed).
+openai - any OpenAI-compatible /chat/completions endpoint (OpenAI, LM Studio, OpenRouter...).
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import tempfile
+import urllib.request
+import uuid
+from pathlib import Path
+
+from .config import Settings
+
+_NULLABLE_STR = {"type": ["string", "null"]}
+
+DECISION_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["understood", "decision", "reply", "ask_owner", "updates",
+                 "manager_agreed", "conversation_over"],
+    "properties": {
+        "understood": {"type": "string", "description": "What the manager said/means, one short line."},
+        "decision": {"type": "string", "description": "What you decided to do and why, one short line."},
+        "reply": {"type": "string", "description": "Message to send to the manager, or empty string."},
+        "ask_owner": {**_NULLABLE_STR, "description": "Question for the owner when a fact is unknown, else null."},
+        "updates": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["restaurant_name", "time", "party_size", "guest_name", "note"],
+            "properties": {
+                "restaurant_name": _NULLABLE_STR,
+                "time": _NULLABLE_STR,
+                "party_size": {"type": ["integer", "null"]},
+                "guest_name": _NULLABLE_STR,
+                "note": _NULLABLE_STR,
+            },
+        },
+        "manager_agreed": {"type": "boolean"},
+        "conversation_over": {"type": "boolean"},
+    },
+}
+
+
+class LLMError(RuntimeError):
+    pass
+
+
+def _parse(text: str) -> dict:
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.strip("`").removeprefix("json").strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < 0:
+        raise LLMError(f"no JSON in model output: {text[:200]!r}")
+    return json.loads(text[start:end + 1])
+
+
+async def complete(settings: Settings, system: str, user: str) -> dict:
+    if settings.llm_backend == "openai":
+        return await asyncio.to_thread(_openai, settings, system, user)
+    return await _codex(settings, system, user)
+
+
+async def _codex(settings: Settings, system: str, user: str) -> dict:
+    # Run in an empty temp dir so codex loads no project AGENTS.md / repo context.
+    work = Path(tempfile.gettempdir()) / "booking-agent-codex"
+    work.mkdir(exist_ok=True)
+    schema = work / "decision.schema.json"
+    schema.write_text(json.dumps(DECISION_SCHEMA), encoding="utf-8")
+    out = work / f"last_{uuid.uuid4().hex}.json"
+
+    args = [settings.codex_bin, "exec", "--skip-git-repo-check", "--ephemeral",
+            "--sandbox", "read-only", "--color", "never",
+            "-c", f'model_reasoning_effort="{settings.codex_reasoning}"',
+            "-C", str(work), "--output-schema", str(schema), "-o", str(out)]
+    if settings.codex_model:
+        args += ["-m", settings.codex_model]
+    args.append("-")  # prompt from stdin
+
+    prompt = (f"{system}\n\n{user}\n\nDo not run commands or read files. "
+              "Answer immediately with the JSON object only.")
+    proc = await asyncio.create_subprocess_exec(
+        *args, stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stdout, stderr = await asyncio.wait_for(proc.communicate(prompt.encode("utf-8")), timeout=120)
+    if not out.exists():
+        raise LLMError(f"codex failed ({proc.returncode}): {stderr.decode('utf-8', 'ignore')[-500:]}")
+    try:
+        return _parse(out.read_text(encoding="utf-8"))
+    finally:
+        out.unlink(missing_ok=True)
+
+
+def _openai(settings: Settings, system: str, user: str) -> dict:
+    body = {
+        "model": settings.openai_model,
+        "temperature": 0.4,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "response_format": {"type": "json_schema",
+                            "json_schema": {"name": "decision", "strict": True, "schema": DECISION_SCHEMA}},
+    }
+    req = urllib.request.Request(
+        settings.openai_base.rstrip("/") + "/chat/completions",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {settings.openai_key}"})
+    with urllib.request.urlopen(req, timeout=90) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return _parse(data["choices"][0]["message"]["content"])
