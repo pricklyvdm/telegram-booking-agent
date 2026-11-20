@@ -24,7 +24,6 @@ def main() -> None:
     r.add_argument("--to", required=True, help="@username of the manager (or a test account)")
     r.add_argument("--live", action="store_true", help="allow writing to the protected real manager")
     r.add_argument("--resume", action="store_true", help="continue today's saved conversation")
-    r.add_argument("--force", action="store_true", help="run even if 17:00 London has passed")
     sm = sub.add_parser("simulate")
     sm.add_argument("--script", type=Path)
     a = p.parse_args()
@@ -39,7 +38,7 @@ def main() -> None:
         asyncio.run(telegram_runner.login(s))
     else:
         try:
-            asyncio.run(telegram_runner.run(s, a.to, a.live, a.resume, a.force))
+            asyncio.run(telegram_runner.run(s, a.to, a.live, a.resume))
         except KeyboardInterrupt:
             print("Stopped.")
 

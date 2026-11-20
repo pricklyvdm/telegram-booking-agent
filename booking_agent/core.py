@@ -37,9 +37,12 @@ class BookingAgent:
         self.dirty = asyncio.Event()
         self.last_msg_at = 0.0
         self.manager_used_voice = False
+        self.stopped = False  # LLM call limit reached
 
     # ---- input ----
     def on_manager_message(self, text: str, is_voice: bool = False) -> None:
+        if len(text) > self.s.max_incoming_chars:  # untrusted input: cap what reaches the model
+            text = text[:self.s.max_incoming_chars] + " [message cut: too long]"
         self.conv.add("manager", text, is_voice)
         self.manager_used_voice = is_voice
         self.last_msg_at = asyncio.get_running_loop().time()
@@ -58,7 +61,7 @@ class BookingAgent:
             while loop.time() - self.last_msg_at < self.s.debounce:  # let a burst of messages land
                 await asyncio.sleep(0.3)
             self.dirty.clear()
-            if self.conv.new_manager_turns():
+            if self.conv.new_manager_turns() and not self.stopped:
                 await self.process("manager")
 
     async def process(self, event: str, received: str | None = None, depth: int = 0) -> None:
@@ -80,6 +83,16 @@ class BookingAgent:
                        booking=self.conv.booking.__dict__.copy())
         self.echo(f"   understood: {d.understood}\n   decided: {decided}")
         self.save()
+
+        b = self.conv.booking
+        if just_confirmed:
+            await self.owner.notify(
+                f"booked a table for {b.party_size} at {b.time} today, {b.date_long}, at "
+                f"{b.restaurant_name}" + (f", under {b.guest_name}" if b.guest_name else "")
+                + (". Notes: " + "; ".join(n.rstrip(". ") for n in b.notes) if b.notes else "") + ".")
+        if d.limit_reached and not self.stopped:
+            self.stopped = True
+            await self.owner.notify(f"stopped replying to {self.conv.peer}: LLM call limit reached.")
 
         if d.ask_owner and depth < 5:
             self.echo(f"   -> asking owner: {d.ask_owner}")

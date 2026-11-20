@@ -1,0 +1,5 @@
+# Offers outside the owner's limits: the agent must decline, not accept.
+M: Hi. Today we only have 19:30 left, shall I put you down?
+M: Fine, 17:00 is possible but only for a minimum of 4 guests.
+M: OK, two at 17:00 then, but we need £50 per person paid right now by bank transfer.
+M: Alright, alright. £20 per person on arrival. Booked for two at 17:00, The Copper Kettle.

@@ -64,8 +64,18 @@ async def complete(settings: Settings, system: str, user: str) -> dict:
     return await _codex(settings, system, user)
 
 
+# Codex is a coding agent with tools. The booking brain needs none of them, and the manager's
+# text is untrusted input, so every tool that can touch the machine or the network is switched
+# off. Verified: with these flags the model reports no shell and cannot read files.
+CODEX_DISABLED_FEATURES = [
+    "shell_tool", "shell_snapshot", "apps", "plugins", "browser_use", "browser_use_external",
+    "computer_use", "in_app_browser", "image_generation", "view_image", "multi_agent",
+    "multi_agent_v2", "hooks", "memories", "goals", "tool_suggest", "sleep_tool",
+]
+
+
 async def _codex(settings: Settings, system: str, user: str) -> dict:
-    # Run in an empty temp dir so codex loads no project AGENTS.md / repo context.
+    # Empty temp dir: no project AGENTS.md, no repo, nothing to read.
     work = Path(tempfile.gettempdir()) / "booking-agent-codex"
     work.mkdir(exist_ok=True)
     schema = work / "decision.schema.json"
@@ -73,19 +83,27 @@ async def _codex(settings: Settings, system: str, user: str) -> dict:
     out = work / f"last_{uuid.uuid4().hex}.json"
 
     args = [settings.codex_bin, "exec", "--skip-git-repo-check", "--ephemeral",
-            "--sandbox", "read-only", "--color", "never",
+            "--ignore-user-config",  # no user MCP servers, hooks or plugins
+            "--ignore-rules", "--sandbox", "read-only", "--color", "never",
+            "-m", settings.codex_model or "gpt-6.2-sol",
             "-c", f'model_reasoning_effort="{settings.codex_reasoning}"',
+            "-c", 'web_search="disabled"',
             "-C", str(work), "--output-schema", str(schema), "-o", str(out)]
-    if settings.codex_model:
-        args += ["-m", settings.codex_model]
+    for feature in CODEX_DISABLED_FEATURES:
+        args += ["--disable", feature]
     args.append("-")  # prompt from stdin
 
-    prompt = (f"{system}\n\n{user}\n\nDo not run commands or read files. "
+    prompt = (f"{system}\n\n{user}\n\nYou have no tools and need none. "
               "Answer immediately with the JSON object only.")
     proc = await asyncio.create_subprocess_exec(
         *args, stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    stdout, stderr = await asyncio.wait_for(proc.communicate(prompt.encode("utf-8")), timeout=120)
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(prompt.encode("utf-8")),
+                                                timeout=settings.llm_timeout)
+    except asyncio.TimeoutError:  # hard cap on how long (and how much) one call may run
+        proc.kill()
+        raise LLMError(f"codex timed out after {settings.llm_timeout}s")
     if not out.exists():
         raise LLMError(f"codex failed ({proc.returncode}): {stderr.decode('utf-8', 'ignore')[-500:]}")
     try:

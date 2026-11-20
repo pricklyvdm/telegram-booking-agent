@@ -1,0 +1,13 @@
+{
+  "_comment": "Instructions the owner gives the agent once. The agent acts only within them and never invents anything that is not here.",
+  "guest_name": "",
+  "party_size": 2,
+  "time": "17:00",
+  "time_flex_minutes": 30,
+  "phone": "",
+  "share_phone": false,
+  "deposit_policy": "May agree to a deposit of up to £20 per person if it is paid on arrival or through the restaurant's own payment link. Never send card details in the chat.",
+  "if_unavailable": "If nothing within the time window is free today, thank the manager politely and close the conversation.",
+  "special_requests": "none",
+  "notes": ""
+}

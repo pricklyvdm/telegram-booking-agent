@@ -13,7 +13,7 @@ from . import voice
 from .config import Settings
 from .core import BookingAgent
 from .decision_log import DecisionLog
-from .owner import ConsoleOwner, TelegramOwner
+from .owner import ConsoleOwner, NoOwner, TelegramOwner
 from .state import Booking, Conversation, london_now
 
 
@@ -47,7 +47,7 @@ class TgTransport:
         return self.client.action(self.peer, kind)
 
 
-async def run(s: Settings, target: str, live: bool, resume: bool, force: bool) -> None:
+async def run(s: Settings, target: str, live: bool, resume: bool) -> None:
     bare = target.strip().lstrip("@").lower().removeprefix("https://t.me/")
     if bare == s.protected_target and not live:  # checked before any connection
         raise SystemExit(f"@{bare} is the real manager. Add --live only after the owner says go.")
@@ -59,8 +59,8 @@ async def run(s: Settings, target: str, live: bool, resume: bool, force: bool) -
         raise SystemExit(f"@{uname} is the real manager. Add --live only after the owner says go.")
 
     now = london_now()
-    if not resume and not force and now.strftime("%H:%M") >= s.owner_facts.get("time", "17:00"):
-        raise SystemExit(f"It is already {now:%H:%M} in London: 17:00 today has passed. Use --force to try anyway.")
+    if now.strftime("%H:%M") >= s.owner_facts.get("time", "17:00"):
+        print(f"Note: it is already {now:%H:%M} in London, so 17:00 today has passed. Running anyway (test).")
 
     run_name = f"{now:%Y-%m-%d}_{uname}"
     conv_file = s.logs_dir / f"{run_name}.conversation.json"
@@ -69,9 +69,11 @@ async def run(s: Settings, target: str, live: bool, resume: bool, force: bool) -
     else:
         conv = Conversation(peer=f"@{uname}", booking=Booking.for_today(s.owner_facts))
 
-    if s.owner_channel == "console":
+    owner_peer = None
+    if s.owner_channel == "none":
+        owner = NoOwner()
+    elif s.owner_channel == "console":
         owner = ConsoleOwner()
-        owner_peer = None
     else:
         owner_peer = await client.get_entity(s.owner_channel)
         owner = TelegramOwner(client, owner_peer)
@@ -82,7 +84,9 @@ async def run(s: Settings, target: str, live: bool, resume: bool, force: bool) -
     @client.on(events.NewMessage(chats=peer, incoming=True))
     async def on_manager(ev):
         msg = ev.message
-        if msg.voice or msg.audio:
+        if (msg.voice or msg.audio) and (msg.file.duration or 0) > s.max_voice_seconds:
+            agent.on_manager_message(f"(sent a {msg.file.duration}s voice message, too long to listen to)")
+        elif msg.voice or msg.audio:
             path = Path(await msg.download_media(file=str(s.logs_dir / "voice" / f"in_{msg.id}.ogg")))
             text = await voice.transcribe(path, s.whisper_model)
             agent.on_manager_message(text or "(inaudible voice message)", is_voice=True)
@@ -100,7 +104,8 @@ async def run(s: Settings, target: str, live: bool, resume: bool, force: bool) -
             owner.feed(ev.message.id, ev.message.raw_text)
 
     print(f"Agent is talking to @{uname}. Booking: {conv.booking.party_size} people, "
-          f"{conv.booking.time}, {conv.booking.date_long}. Owner channel: {s.owner_channel}. Ctrl+C to stop.")
+          f"{conv.booking.time}, {conv.booking.date_long}. Mode: {s.owner_mode}, owner channel: "
+          f"{s.owner_channel}, model: {s.codex_model if s.llm_backend == 'codex' else s.openai_model}. Ctrl+C to stop.")
     if s.voice_mode != "off":  # warm up Whisper so the first voice note is quick
         asyncio.get_running_loop().run_in_executor(None, voice._load_model, s.whisper_model)
     if not resume:

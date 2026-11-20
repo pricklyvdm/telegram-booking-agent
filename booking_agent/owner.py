@@ -1,13 +1,26 @@
-"""How the agent gets facts it does not know: it asks the owner (the real guest).
+"""The owner (the busy person the table is for).
 
-console   - question appears in the terminal where the agent runs, owner types the answer.
-telegram  - question is sent to the owner's Telegram (or to Saved Messages, 'me'),
-            the owner's next message there is the answer.
+In the default autonomous mode the agent never waits for the owner: it acts within
+owner_profile.json and only sends the owner a short report (booking confirmed / stopped).
+In "ask" mode the agent can also ask the owner a question and wait for the answer.
+
+none      - no owner channel at all.
+console   - the terminal where the agent runs.
+telegram  - the owner's Telegram account (@username), or 'me' = the agent account's
+            Saved Messages; in ask mode the owner's next message there is the answer.
 script    - pre-written answers, for offline tests.
 """
 from __future__ import annotations
 
 import asyncio
+
+
+class NoOwner:
+    async def ask(self, question: str, timeout: int) -> str | None:
+        return None
+
+    async def notify(self, text: str) -> None:
+        pass
 
 
 class ConsoleOwner:
@@ -20,8 +33,11 @@ class ConsoleOwner:
             return None
         return ans.strip() or None
 
+    async def notify(self, text: str) -> None:
+        print(f">>> REPORT TO OWNER: {text}")
 
-class ScriptOwner:
+
+class ScriptOwner(ConsoleOwner):
     def __init__(self, answers: list[str]):
         self.answers = list(answers)
 
@@ -32,7 +48,7 @@ class ScriptOwner:
 
 
 class TelegramOwner:
-    """Owner answers in Telegram. The runner calls .feed(text) for each owner message."""
+    """Owner in Telegram. The runner calls .feed() for each new message in the owner chat."""
 
     def __init__(self, client, peer):
         self.client = client
@@ -40,11 +56,13 @@ class TelegramOwner:
         self.waiting: asyncio.Future | None = None
         self.sent_ids: set[int] = set()
 
+    async def _send(self, text: str) -> None:
+        msg = await self.client.send_message(self.peer, text)
+        self.sent_ids.add(msg.id)
+
     async def ask(self, question: str, timeout: int) -> str | None:
         self.waiting = asyncio.get_running_loop().create_future()
-        msg = await self.client.send_message(
-            self.peer, f"Booking agent needs you: {question}\n(reply here, I will pass it on)")
-        self.sent_ids.add(msg.id)
+        await self._send(f"Booking agent needs you: {question}\n(reply here, I will pass it on)")
         try:
             return await asyncio.wait_for(self.waiting, timeout)
         except asyncio.TimeoutError:
@@ -52,8 +70,14 @@ class TelegramOwner:
         finally:
             self.waiting = None
 
+    async def notify(self, text: str) -> None:
+        try:
+            await self._send(f"Booking agent: {text}")
+        except Exception:
+            pass
+
     def feed(self, msg_id: int, text: str) -> None:
         if msg_id in self.sent_ids or not text:
             return
         if self.waiting and not self.waiting.done():
-            self.waiting.set_result(text.strip())
+            self.waiting.set_result(text.strip()[:500])

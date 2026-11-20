@@ -44,6 +44,7 @@ async def simulate(s: Settings, script: Path | None) -> None:
         lines = [l.strip() for l in script.read_text(encoding="utf-8").splitlines()
                  if l.strip() and not l.strip().startswith("#")]
     owner = ScriptOwner([l[2:].strip() for l in lines if l.startswith("O:")]) if script else ConsoleOwner()
+    print(f"Mode: {s.owner_mode}, model: {s.codex_model if s.llm_backend == 'codex' else s.openai_model}")
     agent = BookingAgent(s, conv, ConsoleTransport(), owner,
                          DecisionLog(s.logs_dir, name, "@simulated_manager"),
                          s.logs_dir / f"{name}.conversation.json")
