@@ -48,6 +48,9 @@ class TgTransport:
 
 
 async def run(s: Settings, target: str, live: bool, resume: bool, force: bool) -> None:
+    bare = target.strip().lstrip("@").lower().removeprefix("https://t.me/")
+    if bare == s.protected_target and not live:  # checked before any connection
+        raise SystemExit(f"@{bare} is the real manager. Add --live only after the owner says go.")
     client = make_client(s)
     await client.start()
     peer = await client.get_entity(target)
