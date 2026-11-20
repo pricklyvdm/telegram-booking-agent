@@ -62,11 +62,15 @@ async def run(s: Settings, target: str, live: bool, resume: bool) -> None:
     if now.strftime("%H:%M") >= s.owner_facts.get("time", "17:00"):
         print(f"Note: it is already {now:%H:%M} in London, so 17:00 today has passed. Running anyway (test).")
 
-    run_name = f"{now:%Y-%m-%d}_{uname}"
-    conv_file = s.logs_dir / f"{run_name}.conversation.json"
-    if resume and conv_file.exists():
+    # One log per attempt (the brief evaluates the last full conversation); --resume continues the latest.
+    previous = sorted(s.logs_dir.glob(f"{now:%Y-%m-%d}_{uname}_*.conversation.json"))
+    if resume and previous:
+        conv_file = previous[-1]
+        run_name = conv_file.name.removesuffix(".conversation.json")
         conv = Conversation.load(conv_file)
     else:
+        run_name = f"{now:%Y-%m-%d}_{uname}_{now:%H%M}"
+        conv_file = s.logs_dir / f"{run_name}.conversation.json"
         conv = Conversation(peer=f"@{uname}", booking=Booking.for_today(s.owner_facts))
 
     owner_peer = None
@@ -87,9 +91,13 @@ async def run(s: Settings, target: str, live: bool, resume: bool) -> None:
         if (msg.voice or msg.audio) and (msg.file.duration or 0) > s.max_voice_seconds:
             agent.on_manager_message(f"(sent a {msg.file.duration}s voice message, too long to listen to)")
         elif msg.voice or msg.audio:
-            path = Path(await msg.download_media(file=str(s.logs_dir / "voice" / f"in_{msg.id}.ogg")))
-            text = await voice.transcribe(path, s.whisper_model)
-            agent.on_manager_message(text or "(inaudible voice message)", is_voice=True)
+            try:
+                path = Path(await msg.download_media(file=str(s.logs_dir / "voice" / f"in_{msg.id}.ogg")))
+                text = await voice.transcribe(path, s.whisper_model)
+            except Exception:  # never let a voice note disappear: the agent will ask for it in text
+                text = ""
+            agent.on_manager_message(text or "(voice message that could not be transcribed; ask them to "
+                                             "repeat it in text)", is_voice=True)
         elif msg.raw_text:
             agent.on_manager_message(msg.raw_text)
         else:

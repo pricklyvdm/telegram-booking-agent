@@ -49,10 +49,15 @@ is booked. (`OWNER_MODE=ask` is an alternative where the agent asks the owner an
 
 The manager's messages are untrusted input. Defences are in code, not only in the prompt:
 
-- the LLM call has no tools: Codex runs with shell, browser, computer use, apps, plugins,
-  MCP servers, web search, image tools and hooks disabled, in an empty directory, read-only
-  sandbox, with a hard timeout (verified: it cannot run commands or read files);
-- one LLM call per burst of messages, max `MAX_LLM_CALLS` per conversation, incoming text cut
+- the LLM call has no tools that touch the machine or the network: Codex runs with shell,
+  browser, computer use, apps, plugins, MCP servers, web search, image tools and hooks
+  disabled, in an empty directory, read-only sandbox, with a hard timeout (verified: it cannot
+  run commands or read files). Codex still exposes sub-agents and a JS sandbox without file or
+  network access; a watchdog kills the call on the first sign of any tool use. It reacts to an
+  observed event, so it limits the damage rather than proving nothing started. For strict
+  isolation use `LLM_BACKEND=openai` (a plain API call with no tools at all);
+- one LLM call per burst of messages, max `MAX_LLM_CALLS` per conversation (counted per
+  process run: a `--resume` starts the count again), incoming text cut
   to `MAX_INCOMING_CHARS`, voice notes longer than `MAX_VOICE_SECONDS` are not transcribed,
   only the last `HISTORY_TURNS` messages go to the model;
 - outgoing guard: replies containing a secret value from `.env`, a file path or a key-like

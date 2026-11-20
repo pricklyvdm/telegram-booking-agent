@@ -25,8 +25,43 @@ from .prompts import AUTHORITY, EVENT_HINTS, SYSTEM
 from .state import Conversation, london_now
 
 NUM_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
-HOLDING = "Of course, one moment please while I check that."
-OFF_TOPIC = "Sorry, I can only help with the table booking."
+# Fixed lines the code itself may send, in the manager's language.
+T = {
+    "holding": {"en": "Of course, one moment please while I check that.",
+                "ru": "Конечно, одну минуту, я уточню.",
+                "uk": "Звісно, хвилинку, я уточню."},
+    "off_topic": {"en": "Sorry, I can only help with the table booking.",
+                  "ru": "Извините, я могу помочь только с бронированием столика.",
+                  "uk": "Вибачте, я можу допомогти лише з бронюванням столика."},
+    "hold": {"en": "{t} could work. Would you mind holding it for a few minutes while I check with the guest?",
+             "ru": "{t} может подойти. Не могли бы вы придержать это время на несколько минут, пока я уточню у гостя?",
+             "uk": "{t} може підійти. Чи могли б ви притримати цей час на кілька хвилин, поки я уточню в гостя?"},
+    "decline": {"en": "I'm afraid I can't agree to that on the guest's behalf. Could we keep it to a table for {n} at {t}?",
+                "ru": "Боюсь, я не могу согласиться на это от имени гостя. Можем оставить столик на {n} в {t}?",
+                "uk": "На жаль, я не можу погодитися на це від імені гостя. Можемо залишити столик на {n} о {t}?"},
+    "ask_place": {"en": "Could I take the restaurant's name and address for the guest's calendar invite?",
+                  "ru": "Подскажите, пожалуйста, название и адрес ресторана для календаря гостя?",
+                  "uk": "Підкажіть, будь ласка, назву й адресу ресторану для календаря гостя?"},
+    "greeting": {"en": "Good {part}! Could I book a table for {n} at {t} today, please?"},
+}
+HOLDING = T["holding"]["en"]
+OFF_TOPIC = T["off_topic"]["en"]
+PLACE_WORDS = ("name", "address", "назв", "адрес")
+MONTHS = {"ru": ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября",
+                 "октября", "ноября", "декабря"],
+          "uk": ["січня", "лютого", "березня", "квітня", "травня", "червня", "липня", "серпня", "вересня",
+                 "жовтня", "листопада", "грудня"]}
+PEOPLE = {"ru": {2: "двоих"}, "uk": {2: "двох"}}
+
+
+def lang_of(text: str) -> str:
+    if any("\u0400" <= ch <= "\u04ff" for ch in text or ""):
+        return "uk" if any(ch in "іїєґІЇЄҐ" for ch in text) else "ru"
+    return "en"
+
+
+def tr(key: str, lang: str, **kw) -> str:
+    return T[key].get(lang, T[key]["en"]).format(**kw)
 
 _TIME_RE = re.compile(r"\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b|\b(\d{1,2})[:.](\d{2})\b", re.I)
 _YES_RE = re.compile(r"^\s*(yes|yeah|yep|ok|okay|sure|fine|good|go ahead|да|ок|давай|норм|подходит)\b", re.I)
@@ -46,6 +81,7 @@ class Decision:
     guards: list[str] = field(default_factory=list)
     violations: list[str] = field(default_factory=list)  # broke the owner's limits -> rewrite
     limit_reached: bool = False
+    error: bool = False  # model failed twice; the turn should be retried later
     cancelled: bool = False  # manager withdrew an already confirmed booking
 
 
@@ -89,10 +125,23 @@ def time_variants(hhmm: str) -> set[str]:
     return out
 
 
-def recap(b) -> str:
+def recap(b, lang: str = "en", with_name: bool = False) -> str:
+    """Recap built from the booking state. The guest's name only if it was actually given."""
+    if lang in ("ru", "uk"):
+        who = PEOPLE[lang].get(b.party_size, str(b.party_size))
+        month = MONTHS[lang][["January", "February", "March", "April", "May", "June", "July", "August",
+                              "September", "October", "November", "December"].index(b.date_long.split(" ")[-1])]
+        day = b.date_long.split(", ")[1].split(" ")[0]
+        if lang == "ru":
+            s = f"Подтверждаю: столик на {who} сегодня, {day} {month}, в {b.time}, {b.restaurant_name}"
+            s += f", на имя {b.guest_name}" if with_name and b.guest_name else ""
+            return s + ". Спасибо!"
+        s = f"Підтверджую: столик на {who} сьогодні, {day} {month}, о {b.time}, {b.restaurant_name}"
+        s += f", на ім'я {b.guest_name}" if with_name and b.guest_name else ""
+        return s + ". Дякую!"
     who = NUM_WORDS.get(b.party_size, str(b.party_size))
     s = f"Just to confirm: a table for {who} at {b.time} today, {b.date_long}, at {b.restaurant_name}"
-    if b.guest_name:
+    if with_name and b.guest_name:
         s += f", under the name {b.guest_name}"
     return s + ". Thank you very much!"
 
@@ -130,6 +179,7 @@ class Brain:
         self.agreed_pending = False  # manager agreed but we could not recap yet (no restaurant name)
         self.last_question: str | None = None  # last question sent to the owner (ask mode)
         self.calls = 0
+        self.last_boundary = 0  # transcript length the last decision was based on
 
     # ---------- prompt ----------
     def _flex(self) -> int:
@@ -152,7 +202,7 @@ class Brain:
             tag = t.role.upper() + (" (voice message, transcribed)" if t.voice else "")
             new = "  <-- NEW" if i >= self.conv.processed_upto and t.role == "manager" else ""
             lines.append(f"[{t.ts}] {tag}: {t.text}{new}")
-        profile = {k: v for k, v in self.s.owner_facts.items() if not k.startswith("_")}
+        profile = self._profile()
         flex = self._flex()
         base = self.conv.booking.approved_times[0]
         bm = _minutes(base)
@@ -183,16 +233,37 @@ class Brain:
             except Exception as e:
                 last = e
         return {"understood": "", "decision": f"LLM error: {last}", "reply": "", "ask_owner": None,
-                "updates": {}, "manager_agreed": False, "conversation_over": False}
+                "updates": {}, "manager_agreed": False, "conversation_over": False, "_error": True}
+
+    def _lang(self) -> str:
+        last = next((t.text for t in reversed(self.conv.turns) if t.role == "manager"), "")
+        return lang_of(last)
+
+    def _profile(self) -> dict:
+        """What the model may see: no internal keys, no phone unless the owner allows sharing it."""
+        prof = {k: v for k, v in self.s.owner_facts.items() if not k.startswith("_")}
+        if not prof.get("share_phone"):
+            prof.pop("phone", None)
+        return prof
 
     async def step(self, event: str) -> Decision:
         before = copy.deepcopy(self.conv.booking)
+        # Only messages that existed when the prompt was built count as handled. A correction that
+        # arrives while the model is thinking stays NEW (core.py re-decides before sending).
+        boundary = self.last_boundary = len(self.conv.turns)
         raw = await self._call(event)
         if raw is None:
-            self.conv.processed_upto = len(self.conv.turns)
+            self.conv.processed_upto = boundary
             return Decision(event, "", f"LLM call limit ({self.s.max_llm_calls}) reached: agent stops replying",
                             "", None, False, True, limit_reached=True)
         d = self._apply(raw, event)
+        d.error = bool(raw.get("_error"))
+        if event == "start" and not d.reply:  # never stay silent at the start: the manager won't write first
+            b = self.conv.booking
+            part = "morning" if london_now().hour < 12 else "afternoon" if london_now().hour < 18 else "evening"
+            d.reply = tr("greeting", "en", part=part, n=NUM_WORDS.get(b.party_size, b.party_size), t=b.time)
+            d.guards.append("model failed at the start: sent the fixed opening line")
+            b.status = "requested"
         if d.violations:
             problem = "; ".join(d.violations)
             self.conv.booking = before
@@ -200,15 +271,15 @@ class Brain:
             d2 = self._apply(raw2, event) if raw2 else None
             if d2 is None or d2.violations:
                 self.conv.booking = before
-                d.reply = (f"I'm afraid I can't agree to that on the guest's behalf. Could we keep it "
-                           f"to a table for {NUM_WORDS.get(before.party_size, before.party_size)} "
-                           f"at {before.time}?")
+                lang = self._lang()
+                n = (PEOPLE.get(lang, {}).get(before.party_size) or NUM_WORDS.get(before.party_size, before.party_size))
+                d.reply = tr("decline", lang, n=n, t=before.time)
                 d.guards.append(f"draft broke limits twice ({problem}): sent a safe decline")
                 d.ask_owner = None
             else:
                 d2.guards = [f"first draft broke limits ({problem}): rewritten"] + d2.guards
                 d = d2
-        self.conv.processed_upto = len(self.conv.turns)
+        self.conv.processed_upto = boundary
         return d
 
     # ---------- guards ----------
@@ -238,12 +309,18 @@ class Brain:
         if up.get("note") and up["note"] not in b.notes:
             b.notes.append(up["note"][:200])
 
-        if raw.get("manager_cancelled") and b.status in ("confirmed", "finished"):
+        lang = self._lang()
+        withdrawn = False
+        if raw.get("manager_cancelled") and (b.status in ("confirmed", "finished") or self.agreed_pending):
+            withdrawn = True  # handled before any confirmation, so a withdrawn offer is never confirmed
+            if b.status in ("confirmed", "finished"):
+                d.cancelled = True
+                d.guards.append("manager cancelled the confirmed booking: back to requesting, owner informed")
+            else:
+                d.guards.append("manager withdrew the agreement before the recap: nothing confirmed")
             b.status = "requested"
             self.agreed_pending = False
             b.time = b.approved_times[0]
-            d.cancelled = True
-            d.guards.append("manager cancelled the confirmed booking: back to requesting, owner informed")
 
         # Soft window: a time just outside the owner's window is not refused straight away.
         # The agent asks the manager to hold it and asks the owner (who may well accept 17:40).
@@ -258,8 +335,7 @@ class Brain:
                             "holding it and asking the owner")
             d.ask_owner = (f"The restaurant can't do {b.approved_times[0]} but offers {offered} "
                            f"({diff} min off). Shall I take it? Answer yes or no.")
-            d.reply = (f"{offered} could work. Would you mind holding it for a few minutes "
-                       "while I check with the guest?")
+            d.reply = tr("hold", lang, t=offered)
             d.decision = f"{offered} is just outside the owner's window: hold it and ask the owner"
 
         new_time = norm_time(up.get("time")) or up.get("time")
@@ -288,7 +364,7 @@ class Brain:
                 d.guards.append("ignored guest_name not coming from the profile or the owner")
 
         # No phone / card / any long number that the owner did not give us.
-        known_digits = re.sub(r"\D", "", json.dumps(self.s.owner_facts) + " ".join(
+        known_digits = re.sub(r"\D", "", json.dumps(self._profile()) + " ".join(
             t.text for t in self.conv.turns if t.role == "owner"))
         for m in re.finditer(r"\+?\d[\d\s\-()]{5,}\d", d.reply):
             digits = re.sub(r"\D", "", m.group())
@@ -300,7 +376,7 @@ class Brain:
         # Never leak secrets, paths or key-like strings; cap the length.
         if any(sec in d.reply for sec in self.s.secrets()) or _LEAK_RE.search(d.reply):
             d.guards.append("blocked reply that looked like a secret, path or key")
-            d.reply = OFF_TOPIC
+            d.reply = tr("off_topic", lang)
         if len(d.reply) > self.s.max_reply_chars:
             d.guards.append(f"reply cut to {self.s.max_reply_chars} chars")
             d.reply = _cut(d.reply, self.s.max_reply_chars)
@@ -311,23 +387,24 @@ class Brain:
             b.status = "waiting_owner"
             self.last_question = d.ask_owner
             if not d.reply:
-                d.reply = HOLDING
+                d.reply = tr("holding", lang)
             return d
-        if d.violations:
+        if d.violations or withdrawn:
             return d
 
         # Confirmation.
         if d.manager_agreed or self.agreed_pending:
             if not b.restaurant_name:
                 self.agreed_pending = True
-                if "name" not in d.reply.lower():
+                if not any(w in d.reply.lower() for w in PLACE_WORDS):
                     d.guards.append("manager agreed but restaurant name unknown: asking for it")
-                    d.reply = (d.reply + " Could I take the restaurant's name and address "
-                               "for the guest's calendar invite?").strip()
+                    d.reply = (d.reply + " " + tr("ask_place", lang_of(d.reply) if d.reply else lang)).strip()
             elif b.status not in ("confirmed", "finished"):
                 if not recap_is_complete(d.reply, b):
                     d.guards.append("model reply lacked full recap: appended recap from booking state")
-                    d.reply = (d.reply + " " + recap(b)).strip()
+                    shared = bool(b.guest_name) and any(
+                        b.guest_name.lower() in t.text.lower() for t in self.conv.turns if t.role in ("agent", "manager"))
+                    d.reply = (d.reply + " " + recap(b, lang_of(d.reply) if d.reply else lang, shared)).strip()
                 b.status = "confirmed"
                 self.agreed_pending = False
 
@@ -335,6 +412,10 @@ class Brain:
             b.status = "requested"
         if d.conversation_over and b.status == "confirmed":
             b.status = "finished"
+        elif d.conversation_over and b.status in ("requested", "waiting_owner"):
+            b.status = "closed"  # no table today: stop follow-ups; a new offer from the manager reopens it
+        elif b.status == "closed" and event == "manager" and not d.conversation_over:
+            b.status = "requested"
         return d
 
     def _soft(self) -> int:

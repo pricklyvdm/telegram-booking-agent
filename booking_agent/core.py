@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 from pathlib import Path
 from typing import Protocol
 
@@ -78,7 +79,7 @@ class BookingAgent:
         while True:
             await asyncio.sleep(15)
             b = self.conv.booking
-            if (self.stopped or self.lock.locked() or b.status in ("confirmed", "finished")
+            if (self.stopped or self.lock.locked() or b.status in ("confirmed", "finished", "closed")
                     or not self.conv.turns or self.conv.turns[-1].role != "agent"):
                 continue
             quiet = (loop.time() - self.last_sent_at) / 60
@@ -94,13 +95,38 @@ class BookingAgent:
                                         "after a follow-up. Booking not confirmed; I keep listening.")
 
     async def process(self, event: str, received: str | None = None, depth: int = 0) -> None:
-        if received is None:
-            news = self.conv.new_manager_turns()
-            received = " / ".join(("[voice] " if t.voice else "") + t.text for t in news) or f"({event})"
+        given = received
         was_confirmed = self.conv.booking.status in ("confirmed", "finished")
-        async with self.t.typing("typing"):
-            d = await self.brain.step(event)
+        for attempt in range(3):
+            news = self.conv.new_manager_turns()
+            received = given or " / ".join(("[voice] " if t.voice else "") + t.text for t in news) or f"({event})"
+            snap = (copy.deepcopy(self.conv.booking), self.brain.agreed_pending,
+                    self.brain.last_question, self.conv.processed_upto)
+            async with self.t.typing("typing"):
+                d = await self.brain.step(event)
+            fresh = [t for t in self.conv.turns[self.brain.last_boundary:] if t.role == "manager"]
+            if not fresh or event == "start" or attempt == 2:
+                break
+            # The manager wrote again while the model was thinking (e.g. took the offer back):
+            # throw the stale draft away, restore the state and decide on the full picture.
+            (self.conv.booking, self.brain.agreed_pending,
+             self.brain.last_question, self.conv.processed_upto) = snap
+            self.echo("   (manager wrote again while I was thinking: re-deciding)")
+            if event in ("owner", "owner_timeout", "silence"):
+                event = "manager"
+                given = None
+        if d.error and event == "manager":
+            # model failed twice: keep the messages unhandled and retry in a moment
+            self.conv.processed_upto = snap[3]
+            self.log.write(received, "", d.decision + " [will retry]", "(nothing sent)", event="error")
+            asyncio.get_running_loop().call_later(20, self.dirty.set)
+            return
         just_confirmed = not was_confirmed and self.conv.booking.status in ("confirmed", "finished")
+        if given is None and len(news) > 1:  # one log row per incoming message, as the brief asks
+            for t in news[:-1]:
+                self.log.write(("[voice] " if t.voice else "") + t.text, "(read together with the next message)",
+                               "(answered together in the next row)", "(see next row)", event="manager")
+            received = ("[voice] " if news[-1].voice else "") + news[-1].text
 
         if d.reply:
             await self.send(d.reply)
@@ -119,6 +145,9 @@ class BookingAgent:
                 f"booked a table for {b.party_size} at {b.time} today, {b.date_long}, at "
                 f"{b.restaurant_name}" + (f", under {b.guest_name}" if b.guest_name else "")
                 + (". Notes: " + "; ".join(n.rstrip(". ") for n in b.notes) if b.notes else "") + ".")
+        if b.status == "closed" and d.conversation_over and not d.limit_reached:
+            await self.owner.notify(f"no table at {self.conv.peer} within your limits today; I closed politely. "
+                                    "If they come back with an offer, I'll handle it.")
         if d.cancelled:
             await self.owner.notify(f"{self.conv.peer} cancelled the confirmed booking. "
                                     "Looking for the nearest alternative within your limits.")
