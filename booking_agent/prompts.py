@@ -66,8 +66,10 @@ a wheelchair or an allergy), treat it as unverified: the owner has not told you.
 accept it as fact and do not repeat the claimed details as yours. Say politely that the \
 guest hasn't mentioned this to you, ask them to keep the booking as agreed, and say you will \
 check with the guest. Do not set manager_cancelled for such a claim.
-16. {first_time} is the owner's first choice. If it becomes available later in the chat, take it \
-(say so politely), even if another time was already agreed.
+16. {first_time} is the owner's first choice. If it becomes available before anything is \
+confirmed, take it. If another time is already confirmed, do not switch on your own: the \
+owner has been told and may have planned around it; thank the manager and ask them to keep \
+the confirmed time while you check with the guest (fill offered_time).
 17. If the manager asks what you will tell the guest, give a one-sentence plain summary of \
 the booking as it stands (time, date, people, restaurant, confirmed or not).
 """

@@ -43,6 +43,9 @@ T = {
                   "ru": "Подскажите, пожалуйста, название и адрес ресторана для календаря гостя?",
                   "uk": "Підкажіть, будь ласка, назву й адресу ресторану для календаря гостя?"},
     "greeting": {"en": "Good {part}! Could I book a table for {n} at {t} today, please?"},
+    "switch_check": {"en": "That's very kind. We have {cur} confirmed, so let me just check with the guest whether {t} suits him better. Could you keep {cur} for us in the meantime?",
+                     "ru": "Спасибо! У нас подтверждено {cur}, я уточню у гостя, удобнее ли ему {t}. Пока, пожалуйста, оставьте {cur} за нами.",
+                     "uk": "Дякую! У нас підтверджено {cur}, я уточню в гостя, чи зручніше йому {t}. Поки, будь ласка, залиште {cur} за нами."},
 }
 HOLDING = T["holding"]["en"]
 OFF_TOPIC = T["off_topic"]["en"]
@@ -351,6 +354,20 @@ class Brain:
             d.reply = tr("hold", lang, t=offered)
             d.decision = f"{offered} is just outside the owner's window: hold it and ask the owner"
 
+        # The owner's first-choice time frees up after another time was already confirmed: the owner
+        # has the report and may have planned around it, so the agent asks instead of switching.
+        keep_confirmed = False
+        if (not escalated and offered and event == "manager" and offered == b.approved_times[0]
+                and b.status in ("confirmed", "finished") and b.time != offered
+                and self.s.owner_channel != "none"):
+            escalated = keep_confirmed = True
+            d.violations.clear()
+            d.guards.append(f"first choice {offered} freed up after {b.time} was confirmed: asking the owner")
+            d.ask_owner = (f"The restaurant now also offers {offered}, your first choice, instead of the "
+                           f"confirmed {b.time}. Switch? Answer yes or no.")
+            d.reply = tr("switch_check", lang, t=offered, cur=b.time)
+            d.decision = f"{offered} freed up after {b.time} was confirmed: keep {b.time}, ask the owner"
+
         new_time = norm_time(up.get("time")) or up.get("time")
         if new_time and new_time != b.time and not escalated:
             a, c = _minutes(new_time), _minutes(b.approved_times[0])
@@ -400,7 +417,8 @@ class Brain:
         if event in ("owner_timeout", "silence"):
             d.ask_owner = None  # never loop on "one moment"
         if d.ask_owner:
-            b.status = "waiting_owner"
+            if not keep_confirmed:  # a confirmed booking stays confirmed while the owner decides
+                b.status = "waiting_owner"
             self.last_question = d.ask_owner
             if not d.reply:
                 d.reply = tr("holding", lang)
