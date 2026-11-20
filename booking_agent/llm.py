@@ -66,12 +66,14 @@ async def complete(settings: Settings, system: str, user: str) -> dict:
 
 # Codex is a coding agent with tools. The booking brain needs none of them, and the manager's
 # text is untrusted input, so every tool that can touch the machine or the network is switched
-# off. Verified: with these flags the model reports no shell and cannot read files.
+# off (verified: no shell, no file access). What Codex cannot switch off (sub-agent spawn,
+# a JS sandbox without files or network) is caught by a watchdog that kills the call.
 CODEX_DISABLED_FEATURES = [
     "shell_tool", "shell_snapshot", "apps", "plugins", "browser_use", "browser_use_external",
     "computer_use", "in_app_browser", "image_generation", "view_image", "multi_agent",
-    "multi_agent_v2", "hooks", "memories", "goals", "tool_suggest", "sleep_tool",
+    "multi_agent_v2", "hooks", "memories", "goals", "tool_suggest", "sleep_tool", "code_mode",
 ]
+ALLOWED_CODEX_ITEMS = {"agent_message", "reasoning", "error"}
 
 
 async def _codex(settings: Settings, system: str, user: str) -> dict:
@@ -82,7 +84,7 @@ async def _codex(settings: Settings, system: str, user: str) -> dict:
     schema.write_text(json.dumps(DECISION_SCHEMA), encoding="utf-8")
     out = work / f"last_{uuid.uuid4().hex}.json"
 
-    args = [settings.codex_bin, "exec", "--skip-git-repo-check", "--ephemeral",
+    args = [settings.codex_bin, "exec", "--json", "--skip-git-repo-check", "--ephemeral",
             "--ignore-user-config",  # no user MCP servers, hooks or plugins
             "--ignore-rules", "--sandbox", "read-only", "--color", "never",
             "-m", settings.codex_model or "gpt-6.2-sol",
@@ -98,14 +100,45 @@ async def _codex(settings: Settings, system: str, user: str) -> dict:
     proc = await asyncio.create_subprocess_exec(
         *args, stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    proc.stdin.write(prompt.encode("utf-8"))
+    await proc.stdin.drain()
+    proc.stdin.close()
+
+    # Watchdog: the brain must only produce a message. Any tool activity (sub-agent spawn,
+    # command, file change, MCP call...) kills the process at once.
+    tool_used: list[str] = []
+    err_tail: list[str] = []
+
+    async def watch_stdout():
+        async for raw in proc.stdout:
+            try:
+                ev = json.loads(raw)
+            except ValueError:
+                continue
+            kind = (ev.get("item") or {}).get("type")
+            if kind and kind not in ALLOWED_CODEX_ITEMS:
+                tool_used.append(kind)
+                proc.kill()
+
+    async def watch_stderr():
+        async for raw in proc.stderr:
+            line = raw.decode("utf-8", "ignore")
+            err_tail[:] = (err_tail + [line])[-5:]
+            if "tools::router" in line or "collab" in line:
+                tool_used.append(line.strip()[:120])
+                proc.kill()
+
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(prompt.encode("utf-8")),
-                                                timeout=settings.llm_timeout)
+        await asyncio.wait_for(asyncio.gather(watch_stdout(), watch_stderr(), proc.wait()),
+                               timeout=settings.llm_timeout)
     except asyncio.TimeoutError:  # hard cap on how long (and how much) one call may run
         proc.kill()
         raise LLMError(f"codex timed out after {settings.llm_timeout}s")
+    if tool_used:
+        out.unlink(missing_ok=True)
+        raise LLMError(f"model tried to use a tool ({tool_used[0]}): call killed")
     if not out.exists():
-        raise LLMError(f"codex failed ({proc.returncode}): {stderr.decode('utf-8', 'ignore')[-500:]}")
+        raise LLMError(f"codex failed ({proc.returncode}): {''.join(err_tail)[-500:]}")
     try:
         return _parse(out.read_text(encoding="utf-8"))
     finally:
